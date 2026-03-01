@@ -1,355 +1,301 @@
 
-# Kubernetes Application Delivery (Real “Ops” Scenario)
-**Deployments + Services + Ingress + Health Checks (readiness/liveness)**
+# Kubernetes Application Delivery
 
-This is my way of delivering an application in Kubernetes: I deploy it with a **Deployment**, expose it internally with a **Service**, publish it externally using **Ingress (NGINX)**, and I protect uptime with **readiness + liveness probes** so bad pods don’t take traffic.
+## Context
+
+In a real Ops environment, deploying an application is not just about making the container run. It must be delivered in a way that is stable, reachable, and easy to troubleshoot.
+
+For this project, I used a Kubernetes delivery pattern that reflects how I would expose and protect an application in a real platform setup. I deployed the app with a **Deployment**, exposed it internally with a **Service**, published it externally using **Ingress (NGINX)**, and protected availability with **readiness and liveness probes**.
+
+This project shows how I deliver an application in Kubernetes while making sure users only hit healthy pods and that troubleshooting stays simple during incidents.
 
 ---
 
 ## Problem
 
-In production, “it works on my laptop” is not enough.
+In production, just having a pod in a **Running** state does not mean the application is actually ready for users.
 
-Common issues I’ve seen (and simulated here):
+Common delivery problems include:
 
-- The app starts, but it’s **not ready** yet and still receives traffic → users get errors.
-- A container **hangs** or becomes unhealthy but stays running → slow outages.
-- The app is deployed, but there’s **no clean external access** (no hostname/path routing).
-- Debugging is hard without a clear delivery pattern and proof (CLI + screenshots).
+* The application starts slowly but receives traffic too early
+* A container becomes unhealthy but is still left running
+* The application is deployed internally but is not exposed cleanly to users
+* Rollouts fail and there is no quick visibility into what is wrong
+* Teams need a repeatable delivery pattern that is easy to validate and support
+
+Without a proper Kubernetes delivery design, these issues can cause failed releases, bad user experience, and longer troubleshooting time.
 
 ---
 
 ## Solution
 
-I built a delivery pattern that looks like a real platform setup:
+I built a Kubernetes application delivery workflow based on the core components used in real environments:
 
-- **Deployment** runs the app with **replicas** for availability
-- **Service (ClusterIP)** provides stable internal networking
-- **Ingress (NGINX)** exposes the app using a clean URL (host/path)
-- **Readiness probe** prevents traffic until the app is ready
-- **Liveness probe** restarts containers when the app becomes unhealthy
-- **Rolling updates** so I can ship new versions with minimal downtime
+* **Deployment** to manage the application lifecycle and replicas
+* **Service (ClusterIP)** to give the app stable internal networking
+* **Ingress (NGINX)** to expose the app through a clean route
+* **Readiness probe** to stop traffic from reaching pods before they are ready
+* **Liveness probe** to restart unhealthy containers automatically
+* **Rolling update behavior** to support safer deployments
+
+This setup creates a cleaner and more production-aligned delivery pattern for Kubernetes applications.
 
 ---
 
-## Architecture Diagram
+## Architecture
 
 ![Architecture Diagram](screenshots/architecture.png)
 
 ---
 
-## Step-by-step CLI
+## Workflow
 
-> Example namespace: `delivery-demo`  
-> Example app name: `demo-app`  
-> If you are using Minikube, enable ingress first.
+### 1. Enable the Ingress controller
 
-### 1) Create a project folder + files
+**Goal:** Make sure the cluster can process Ingress rules before exposing the application externally.
 
-**Goal:** Keep everything clean and repeatable.
+In this project, the first important step was confirming that the **NGINX Ingress Controller** was running correctly in the cluster. Without it, the Ingress resource would exist, but external routing would not actually work.
 
-```bash
-mkdir -p kubernetes-application-delivery/{k8s,screenshots}
-cd kubernetes-application-delivery
-touch README.md k8s/namespace.yaml k8s/deployment.yaml k8s/service.yaml k8s/ingress.yaml
-````
-
----
-
-### 2) Start Minikube and enable NGINX Ingress (Minikube only)
-
-**Goal:** Ensure the Ingress Controller exists before applying Ingress rules.
-
-```bash
-minikube start
-minikube addons enable ingress
-kubectl get pods -n ingress-nginx
-```
-
-#### 📸 Screenshot 01: Ingress controller running
+#### Screenshot
 
 ![Ingress controller running](screenshots/01-ingress-controller-running.png)
 
 ---
 
-### 3) Create the namespace
+### 2. Deploy the application with health protection
 
-**Goal:** Isolate the app like a real environment.
+**Goal:** Run the application with replicas and make sure Kubernetes can decide when pods are ready or unhealthy.
 
-Create `k8s/namespace.yaml`:
+I deployed the application using a Kubernetes **Deployment**. This is the core delivery object that manages the pods and keeps the desired number of replicas running.
 
-```yaml
+I also included **readiness** and **liveness probes** so that:
 
-```
+* the pod does not receive traffic before it is ready
+* the container is restarted automatically if it becomes unhealthy
 
-Apply:
+This is one of the most important parts of safe application delivery in Kubernetes.
 
-```bash
-kubectl apply -f k8s/namespace.yaml
-kubectl get ns | grep delivery-demo
-```
-
----
-
-### 4) Deploy the application (Deployment + health checks)
-
-**Goal:** Run multiple replicas and protect traffic using readiness/liveness probes.
-
-Create `k8s/deployment.yaml`:
-
-```yaml
-
-```
-
-Apply:
-
-```bash
-kubectl apply -f k8s/deployment.yaml
-kubectl -n delivery-demo get deploy,pods -o wide
-```
-
-#### 📸 Screenshot 02: Deployment + pods ready
+#### Screenshot
 
 ![Deployment + pods ready](screenshots/02-deployment-pods-ready.png)
 
-
-
 ---
 
-### 5) Expose the app internally (Service)
+### 3. Expose the application internally with a Service
 
-**Goal:** Stable internal endpoint for the app. 
+**Goal:** Give the application a stable internal endpoint inside the cluster.
 
-Create `k8s/service.yaml`:
+After the Deployment was running, I exposed it through a **Service**. This allowed Kubernetes to route traffic to the correct pods through a stable internal name and IP abstraction.
 
-```yaml
+This step is important because pods are temporary, but the Service provides a consistent access point.
 
-```
-
-Apply:
-
-```bash
-kubectl apply -f k8s/service.yaml
-kubectl -n delivery-demo get svc
-```
-
-
-#### 📸 Screenshot 03: Service created
+#### Screenshot
 
 ![Service created](screenshots/03-service-created.png)
 
-
 ---
 
-### 6) Publish externally (Ingress)
+### 4. Publish the application externally with Ingress
 
-**Goal:** Clean external access using hostname/path routing.
+**Goal:** Make the application reachable from outside the cluster using clean routing.
 
-Create `k8s/ingress.yaml`:
+I used **Ingress** with NGINX so the application could be accessed externally through a simple host/path pattern instead of exposing pods directly.
 
-```yaml
+This is closer to how applications are published in a real Kubernetes platform, where routing is centralized and controlled.
 
-```
-
-Apply:
-
-```bash
-kubectl apply -f k8s/ingress.yaml
-kubectl -n delivery-demo get ingress
-kubectl -n delivery-demo describe ingress demo-app-ingress
-```
-#### 📸 Screenshot 04: Ingress created
+#### Screenshot
 
 ![Ingress created](screenshots/04-ingress-created.png)
 
-
-
 ---
 
-### 7) Map hostname to Minikube IP (local testing)
+### 5. Validate browser access
 
-**Goal:** Prove Ingress routing works like a real domain.
+**Goal:** Confirm the external route works the way a user would experience it.
 
-Add to your local hosts file (Ubuntu WSL):
+Once the Ingress was in place, I validated that the application was reachable successfully from the browser.
 
-```bash
-sudo vim /etc/hosts
-127.0.0.1 demo-app.local
+This step proves that the full delivery chain is working:
 
-```
+* Deployment
+* Service
+* Ingress
+* external access
 
-Add to your local hosts file (Windows example):
-
-* Open Notepad as Admin
-* Edit: `C:\Windows\System32\drivers\etc\hosts`
-* Add:
-
-  ```
-  127.0.0.1 demo-app.local
-  ```
-
-Test:
-
-```bash
-curl -I http://demo-app.local/
-```
-#### 📸 Screenshot 05: Browser success
+#### Screenshot
 
 ![Browser success](screenshots/05-browser-success.png)
 
-
 ---
 
-### 8) Validate health checks are working
+### 6. Confirm readiness and liveness behavior
 
-**Goal:** Confirm readiness/liveness are configured and pods are Ready.
+**Goal:** Verify that Kubernetes is actively checking pod health.
 
-Check probes:
+I validated the pod health configuration to confirm that readiness and liveness probes were present and working as expected.
 
-```bash
+This is important because a pod being “Running” is not enough. I wanted proof that Kubernetes had actual health-check logic protecting traffic and availability.
 
-kubectl -n delivery-demo describe pod demo-app-85cbf89dc9-gvxcq | sed -n '/Liveness:/,/Environment:/p'
-
-kubectl -n delivery-demo get pods
-```
-
-#### 📸 Screenshot 06: Describe probes proof
+#### Screenshot
 
 ![Describe probes](screenshots/06-describe-probes.png)
 
-
-
 ---
 
-### 9) Simulate a “bad rollout” and watch Kubernetes protect traffic
+### 7. Simulate a bad rollout
 
-**Goal:** Real ops behavior: safe rollouts + rollback in seconds.
+**Goal:** Show how Kubernetes behaves when a deployment update goes wrong.
 
-Rollout a change (example):
+To make this more realistic, I simulated a failed rollout. This is the kind of issue that can happen during real releases when an image is incorrect or the app version is broken.
 
-```bash
-kubectl -n delivery-demo set image deploy/demo-app demo-app=nginx:does-not-exist
-kubectl -n delivery-demo rollout status deploy/demo-app
-kubectl -n delivery-demo rollout history deploy/demo-app
-```
+This step shows the operational value of watching rollout status and validating deployments before they fully impact users.
 
-#### 📸 Screenshot 07: Rollout status
+#### Screenshot
 
 ![Rollout status](screenshots/07-rollout-status.png)
 
-
 ---
 
-### 10) Events troubleshooting (when something goes wrong)
+### 8. Investigate events for troubleshooting
 
-**Goal:** When it breaks, events tell you *exactly* what Kubernetes is unhappy about.
+**Goal:** Use Kubernetes events to understand delivery failures quickly.
 
-```bash
-kubectl -n delivery-demo get events --sort-by=.metadata.creationTimestamp
-```
+When something goes wrong in Kubernetes, **events** are often the fastest way to understand what the platform is reporting.
 
-#### 📸 Screenshot 08: Events troubleshooting
+I used events to investigate the rollout behavior and delivery issues. This helps reduce guessing and gives direct visibility into scheduling, image pull, probe, or routing problems.
+
+#### Screenshot
 
 ![Events troubleshooting](screenshots/08-events-troubleshooting.png)
 
-Rollback if needed:
-
-```bash
-kubectl -n delivery-demo rollout undo deploy/demo-app
-kubectl -n delivery-demo rollout status deploy/demo-app
-```
-
-
 ---
 
-## Outcome
+## Business Impact
 
-* My app is deployed using a **repeatable delivery pattern**
-* Users access it through a clean endpoint via **Ingress**
-* **Readiness** prevents traffic to unready pods
-* **Liveness** automatically restarts unhealthy containers
-* I can do **safe rolling updates** and **rollback fast**
-* I have proof (CLI + screenshots) like real ops documentation
+This project reflects the way application delivery should work in a real Kubernetes environment.
+
+The business value is:
+
+* **Better uptime** because unhealthy pods are automatically handled
+* **Safer releases** through readiness/liveness protection and rollout visibility
+* **Cleaner external access** using Ingress instead of ad hoc exposure
+* **Faster incident response** because troubleshooting is structured
+* **More consistent deployments** through a repeatable Kubernetes delivery pattern
+
+In short, this reduces deployment risk and improves reliability for production applications.
 
 ---
 
 ## Troubleshooting
 
-### 1) Ingress has no address / not routing
+### Ingress is created but routing does not work
 
-**Check ingress controller:**
+This usually means the Ingress controller is not running correctly, the rule is not applied as expected, or local routing is not mapped properly.
+
+### Browser access fails
+
+This may happen if hostname mapping is wrong, the Ingress is not configured correctly, or the controller is not serving the route.
+
+### Pods are running but not Ready
+
+This often means the readiness probe is failing, the application is still starting, or the health endpoint is incorrect.
+
+### Service exists but traffic does not reach pods
+
+This usually happens when the Service selector does not match the pod labels.
+
+### Rollout gets stuck
+
+This can happen when the image is wrong, the probes fail, or the new version cannot start correctly.
+
+### Delivery fails and cause is unclear
+
+Kubernetes events are one of the first places I check because they usually show exactly what the platform is unhappy about.
+
+---
+
+## Useful CLI
+
+### General validation
+
+```bash
+kubectl get pods -A
+kubectl get svc -A
+kubectl get ingress -A
+kubectl get deploy -A
+```
+
+### Check ingress controller
 
 ```bash
 kubectl get pods -n ingress-nginx
 kubectl get svc -n ingress-nginx
 ```
 
-**Check ingress details:**
+### Check application resources
 
 ```bash
+kubectl -n delivery-demo get deploy,pods,svc,ingress
 kubectl -n delivery-demo describe ingress demo-app-ingress
-kubectl -n delivery-demo get events --sort-by=.metadata.creationTimestamp
+kubectl -n delivery-demo describe svc demo-app-svc
+kubectl -n delivery-demo describe deploy demo-app
 ```
 
----
-
-### 2) `curl demo-app.local` fails
-
-**Confirm hosts mapping + Minikube IP:**
-
-```bash
-minikube ip
-```
-
-**Confirm ingress is created:**
-
-```bash
-kubectl -n delivery-demo get ingress
-```
-
----
-
-### 3) Pods are running but not Ready
-
-**Readiness probe might be failing:**
+### Check pod health
 
 ```bash
 kubectl -n delivery-demo describe pod -l app=demo-app
 kubectl -n delivery-demo logs -l app=demo-app --tail=100
+kubectl -n delivery-demo get pods
 ```
 
----
+### Check rollout status
 
-### 4) Service has no endpoints
+```bash
+kubectl -n delivery-demo rollout status deploy/demo-app
+kubectl -n delivery-demo rollout history deploy/demo-app
+kubectl -n delivery-demo rollout undo deploy/demo-app
+```
 
-Usually means selector doesn’t match pod labels.
+### Check events for troubleshooting
+
+```bash
+kubectl -n delivery-demo get events --sort-by=.metadata.creationTimestamp
+```
+
+### Confirm service selector and pod labels
 
 ```bash
 kubectl -n delivery-demo describe svc demo-app-svc
 kubectl -n delivery-demo get pods --show-labels
 ```
 
-Make sure:
-
-* Service selector: `app: demo-app`
-* Pod labels: `app: demo-app`
-
----
-
-### 5) Rollout stuck
+### Local access testing
 
 ```bash
-kubectl -n delivery-demo rollout status deploy/demo-app
-kubectl -n delivery-demo describe deploy demo-app
-kubectl -n delivery-demo get events --sort-by=.metadata.creationTimestamp
-```
-
-Rollback:
-
-```bash
-kubectl -n delivery-demo rollout undo deploy/demo-app
+curl -I http://demo-app.local/
+minikube ip
 ```
 
 ---
 
+## Cleanup
+
+When I am done with the project, I remove the namespace and any test resources created for the delivery demo.
+
+```bash
+kubectl delete namespace delivery-demo
+```
+
+If using Minikube and I want to fully stop the local cluster:
+
+```bash
+minikube stop
+```
+
+If I want to remove the full local cluster:
+
+```bash
+minikube delete
+```
 
